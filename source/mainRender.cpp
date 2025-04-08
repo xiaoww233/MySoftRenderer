@@ -1,145 +1,343 @@
+#define NOMINMAX
 #include "tgaimage.h"
 #include "model.h"
 #include"my_gl.h"
+#include"createwindow.h"
 
-struct o2v
+HWND renderwindow = 0;
+const char* g_filePath = nullptr;
+int width;
+int height;
+TGAImage* screen;
+Vec3f cameracoord;
+Vec3f center;
+Vec3f position;
+
+struct complexshader
 {
-	std::vector<std::vector<Vec3f>> vertex_coord;
-	std::vector<std::vector<Vec2f>> tex_coord;
-	std::vector<std::vector<Vec3f>> nor_coord;
+	vertex_shader* vs;
+	frangment_shader* fs;
+	HBITMAP map;
+
+	~complexshader() {
+		delete vs;
+		delete fs;
+		if (map) DeleteObject(map);
+	}
 };
 
-class vertex_shader {
-private:
-	Model _model;
-public:
-	vertex_shader(const char* filename, bool istexture, const char* filenametex = NULL) :_model(filename) {
-		if (istexture) {
-			_model.settex(filenametex);
+void setmodel(complexshader* a);
+void unloadmodel(complexshader* a);
+void settex(complexshader* a);
+
+LRESULT CALLBACK renderProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+	static float startlx = 0;
+	static float startly = 0;
+	static float startrx = 0;
+	static float startry = 0;
+	switch (uMsg)
+	{
+	case WM_LBUTTONDOWN: {
+		startlx = (int)(short)LOWORD(lParam);
+		startly = (int)(short)HIWORD(lParam);
+		SetCapture(hwnd);
+		break;
+	}
+	case WM_LBUTTONUP: {
+		ReleaseCapture();
+		break;
+	}
+	case WM_MOUSEMOVE: {
+		if ((wParam & MK_LBUTTON) && (GetCapture() == hwnd)) {
+			int currentX = (int)(short)LOWORD(lParam);
+			int currentY = (int)(short)HIWORD(lParam);
+			RECT rect;
+			GetClientRect(hwnd, &rect);
+			int screenWidth = rect.right - rect.left;
+			int screenHeight = rect.bottom - rect.top;
+
+			float movex = (currentX - startlx) / float(screenWidth);
+			float movey = (currentY - startly) / float(screenHeight);
+
+			cameracoord = CameraMoveByMouse(movex, movey, 180.0f, 0, cameracoord, center);
+			startlx = currentX;
+			startly = currentY;
+		}
+		else if ((wParam & MK_RBUTTON) && (GetCapture() == hwnd)) {
+			// 鼠标移动时处理
+			int currentX = (int)(short)LOWORD(lParam);
+			int currentY = (int)(short)HIWORD(lParam);
+
+			// 获取当前窗口大小，进行归一化处理
+			RECT rect;
+			GetClientRect(hwnd, &rect);
+			int screenWidth = rect.right - rect.left;
+			int screenHeight = rect.bottom - rect.top;
+
+			// 根据鼠标的相对移动来调整 center（相机旋转中心）
+			float movex = (currentX - startrx) / float(screenWidth);
+			float movey = (currentY - startry) / float(screenHeight);
+
+			// 更新相机的旋转中心 position
+			center.x += movex * 1.0f;  // 水平调整旋转中心
+			center.y -= movey * 1.0f;  // 垂直调整旋转中心
+
+			// 更新起始位置，继续跟踪鼠标
+			startrx = currentX;
+			startry = currentY;
+		}
+		break;
+	}
+	case WM_RBUTTONDOWN: {
+		// 获取鼠标按下的位置
+		startrx = (int)(short)LOWORD(lParam);
+		startry = (int)(short)HIWORD(lParam);
+		SetCapture(hwnd);  // 捕获鼠标
+		break;
+	}
+	case WM_RBUTTONUP: {
+		ReleaseCapture();  // 释放鼠标捕获
+		break;
+	}
+	case WM_KEYDOWN: {
+		switch (wParam)
+		{
+		case VK_UP: {
+			position.x += 0.1f;
+			break;
+		}
+		case VK_DOWN: {
+			position.x -= 0.1f;
+			break;
+		}
+		case VK_LEFT: {
+			position.y += 0.1f;
+			break;
+		}
+		case VK_RIGHT: {
+			position.y -= 0.1f;
+			break;
+		}
+		case VK_NUMPAD1: {
+			position.z += 0.1f;
+			break;
+		}
+		case VK_NUMPAD2: {
+			position.z -= 0.1f;
+			break;
+		}
+		case VK_SPACE: {
+			position = { 0.0f,0.0f,0.0f };
+			center = position;
+			break;
+		}
+		default:
+			break;
+		}
+		break;
+	}
+	case WM_MOUSEWHEEL: {
+		int zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+		if (zDelta > 0) {
+			cameracoord = CameraMoveByMouse(0, 0, 0.1f, -0.1f, cameracoord, center);
+		}
+		else if (zDelta < 0) {
+			cameracoord = CameraMoveByMouse(0, 0, -0.1f, 0.1f, cameracoord, center);
 		}
 	}
-	TGAImage& gettex() {
-		return _model.gettex();
-	}
-	o2v MVPtrans(const Vec3f& worldcoord, const Vec3f& rotate_angle, const Vec3f& scale, const Vec3f& camera_coord, const Vec3f& camera_direction, const float& left, const float& right, const float& bottom, const float& top, const float& near, const float& far) {
-		o2v result;
-		int numface = _model.nfaces();
-		Matrix4x4f Matrix_M = obj2world(worldcoord, rotate_angle, scale);
-		Matrix4x4f Matrix_V = world2view(camera_coord, camera_direction);
-		Matrix4x4f Matrix_P = view2cilp(left, right, bottom, top, near, far);
-		for (int i = 0; i < numface; i++) {
-			std::vector<Vec3f> trangle;
-			std::vector<Vec2f> tex_trangle;
-			std::vector<Vec3f> normal_trangle;
-			std::vector<Vec3f> test_trangle;
-			for (int j = 0; j < 3; j++) {
-				Vec3f vertex = Matrix_V * Matrix_M * _model.vert(_model.face(i)[j]);
-				test_trangle.push_back(vertex);
-				Vec3f vertex2 = (Matrix_P * vertex) / vertex.z;
-				if (vertex2.x > 1 || vertex2.x < -1 || vertex2.y>1 || vertex2.y < -1 || vertex2.z > 1 || vertex2.z < -1) {
-					continue;
+	case WM_COMMAND:
+	{
+		int mark = LOWORD(wParam);
+		switch (mark)
+		{
+		case IDM_FILE_OPENMODEL:
+			OpenFileDialog(hwnd);
+			if (g_filePath) {
+				setmodel((complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA));
+			}
+			break;
+		case IDM_FILE_UNLOADMODEL: {
+			unloadmodel((complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA));
+			break;
+		}
+		case IDM_FILE_OPENTEXTURE: {
+			OpenFileDialog(hwnd);
+			if (g_filePath) {
+				complexshader* temp = (complexshader*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+				if (temp && temp->vs) {
+					settex(temp);
 				}
-				trangle.push_back(vertex2);
-				tex_trangle.push_back(_model.tex_vert(_model.texture(i)[j]));
-				normal_trangle.push_back(_model.nor_vert(_model.normal(i)[j]));
-			}
-			if (trangle.size() != 3) {
-				continue;
-			}
-			Vec3f normal = (test_trangle[2] - test_trangle[0]) ^ (test_trangle[1] - test_trangle[0]);
-			normal.normalize();
-			if (normal * Vec3f(0, 0, -1) > 0) {
-				result.vertex_coord.push_back(trangle);
-				result.tex_coord.push_back(tex_trangle);
-				result.nor_coord.push_back(normal_trangle);
-			}
-		}
-		return result;
-	}
-};
-class frangment_shader {
-private:
-	o2v vertex;
-public:
-	frangment_shader(const o2v& a) {
-		vertex = a;
-	}
-	void viewtrans(const int& width, const int& height) {
-		int num = vertex.vertex_coord.size();
-		for (int i = 0; i < num; i++) {
-			int num2 = vertex.vertex_coord[i].size();
-			for (int j = 0; j < num2; j++) {
-				vertex.vertex_coord[i][j].x = (vertex.vertex_coord[i][j].x + 1) * width / 2;
-				vertex.vertex_coord[i][j].y = (vertex.vertex_coord[i][j].y + 1) * height / 2;
-				vertex.vertex_coord[i][j].z = (vertex.vertex_coord[i][j].z + 1) / 2 * 255;
-			}
-		}
-	}
- 	void drawcall(const int& width, const int& height, float* zbuffer, TGAImage& target, TGAImage& texture,Vec3f light) {
-		int facenum = vertex.vertex_coord.size();
-		for (int i = 0; i < facenum; i++) {
-			std::vector<Vec3f> triangle = vertex.vertex_coord[i];
-			std::vector<Vec2f> tex_coord = vertex.tex_coord[i];
-			std::vector<Vec3f> normal_coord = vertex.nor_coord[i];
-			Vec2i A, B;
-			A.x = std::min({ triangle[0].x, triangle[1].x, triangle[2].x });
-			B.x = std::max({ triangle[0].x, triangle[1].x, triangle[2].x });
-			A.y = std::max({ triangle[0].y, triangle[1].y, triangle[2].y });
-			B.y = std::min({ triangle[0].y, triangle[1].y, triangle[2].y });
-			Vec3f P;
-			Vec2f Tex_P;
-			for (P.x = A.x; P.x <= B.x; P.x++) {
-				for (P.y = B.y; P.y <= A.y; P.y++) {
-					Vec3f bc_screen = barycentric(triangle[0], triangle[1], triangle[2], P);
-					//质心坐标有一个负值，说明点在三角形外
-					if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;
-					P.z = 0;
-					//计算zbuffer
-					for (int i = 0; i < 3; i++) P.z += triangle[i].raw[2] * bc_screen.raw[i];
-					//计算纹理坐标
-					Tex_P = { 0.0f,0.0f };
-					for (int i = 0; i < 3; i++) {
-						Tex_P.x  += tex_coord[i].raw[0] * bc_screen.raw[i] * texture.get_width();
-						Tex_P.y += tex_coord[i].raw[1] * bc_screen.raw[i] * texture.get_height();
-					}
-					//计算表面亮度
-					float intensity_P;
-					Vec3f normal_P={0,0,0};
-					for (int i = 0; i < 3; i++) {
-						normal_P.x += normal_coord[i].raw[0] * bc_screen.raw[i];
-						normal_P.y += normal_coord[i].raw[1] * bc_screen.raw[i];
-						normal_P.z += normal_coord[i].raw[2] * bc_screen.raw[i];
-					}
-					intensity_P = normal_P * light;
-					if (zbuffer[int(P.x + P.y * width)] < P.z) {
-						zbuffer[int(P.x + P.y * width)] = P.z;
-						TGAColor temp2(255, 255, 255, 255);
-						if (texture.buffer() != 0) {
-							temp2 = texture.get(Tex_P.x, Tex_P.y);
-						}
-						target.set(P.x, P.y, TGAColor(temp2.r , temp2.g, temp2.b , temp2.a));
-					}
+				else {
+					MessageBox(hwnd, L"请先载入模型！", L"对不起", MB_OK);
 				}
 			}
+
+		}
+		default:
+			break;
+		}
+		return 0;
+	}
+	case WM_PAINT: {
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hwnd, &ps);
+
+		HBITMAP bmap = ((complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA))->map;
+		if (bmap) {
+			// 创建内存 DC 用于双缓冲
+			HDC hdcMem = CreateCompatibleDC(hdc);
+			SelectObject(hdcMem, bmap);
+
+			// 获取客户区尺寸
+			RECT rect;
+			GetClientRect(hwnd, &rect);
+
+			// 绘制位图（居中显示）
+			int bmpWidth = width;
+			int bmpHeight = height;
+			int x = (rect.right - bmpWidth) / 2;
+			int y = (rect.bottom - bmpHeight) / 2;
+			BitBlt(hdc, x, y, bmpWidth, bmpHeight, hdcMem, 0, 0, SRCCOPY);
+
+			DeleteDC(hdcMem);
+		}
+		else {
+			DefWindowProc(hwnd, WM_PAINT, (WPARAM)hdc, 0);
+		}
+
+		EndPaint(hwnd, &ps);
+		break;
+	}
+	case WM_SIZE: {
+		if (screen) {
+			delete(screen);
+			screen = nullptr;
+		}
+		width = LOWORD(lParam);
+		height = HIWORD(lParam);
+		width = std::max(width, height);
+		height = width;
+		screen = new TGAImage(width, height, 4);
+		break;
+	}
+	case WM_CLOSE: {
+		screen->write_tga_file("test.tga");
+		if (MessageBox(hwnd, L"确认退出吗？", L"提示", MB_YESNO) == IDYES) {
+			DestroyWindow(hwnd);
+		}
+		return 0;
+	}
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+	default:
+		return DefWindowProc(hwnd, uMsg, wParam, lParam);
+		break;
+	}
+}
+
+void setmodel(complexshader* a) {
+	delete(a->vs);
+	delete(a->fs);
+	cameracoord = { 0.0f,0.0f,2.0f };
+	center = { 0.0f,0.0f,0.0f };
+	position = { 0.0f,0.0f,0.0f };
+	vertex_shader* temp = new vertex_shader(g_filePath, false);
+	frangment_shader* temp2 = new frangment_shader(temp->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, -1.0f, -100.0f));
+	a->vs = temp;
+	a->fs = temp2;
+}
+void unloadmodel(complexshader* a) {
+	delete(a->vs);
+	delete(a->fs);
+	a->vs = nullptr;
+	a->fs = nullptr;
+	screen->clear();
+	g_filePath = nullptr;
+}
+void settex(complexshader* a) {
+	a->vs->getmodel().settex(g_filePath);
+}
+
+int windowinit(HINSTANCE hInstance, int nCmdShow) {
+	WNDCLASSEX wc;
+	wc.cbSize = sizeof(WNDCLASSEX);
+	wc.style = CS_HREDRAW | CS_VREDRAW;
+	wc.lpfnWndProc = renderProc;
+	wc.cbClsExtra = 0;
+	wc.cbWndExtra = 0;
+	wc.hInstance = hInstance;
+	wc.hIcon = NULL;
+	wc.hCursor = LoadCursor(0, IDC_ARROW);
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wc.lpszMenuName = NULL;
+	wc.lpszClassName = L"renderwin";
+	wc.hIconSm = NULL;
+
+	complexshader* a = new complexshader();
+
+	RegisterClassEx(&wc);
+	HMENU menu = createmianmenu();
+	renderwindow = CreateWindowEx(
+		0,
+		L"renderwin",
+		L"test",
+		WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+		NULL,
+		menu,
+		hInstance,
+		NULL);
+	if (renderwindow == NULL) {
+		return 1;
+	}
+	SetWindowLongPtr(renderwindow, GWLP_USERDATA, (LONG_PTR)a);
+	ShowWindow(renderwindow, nCmdShow);
+	UpdateWindow(renderwindow);
+}
+
+void Run(Vec3f light) {
+	MSG msg = { 0 };
+	float* _zbuffer = new float[2600 * 1500];
+	constexpr float minuesmax = -std::numeric_limits<float>::max();
+	for (int i = (2600 * 1500) - 1; i >= 0; i--)_zbuffer[i] = minuesmax;
+	while (msg.message != WM_QUIT) {
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		else {
+			complexshader* temp = (complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA);
+			if (temp && temp->vs && temp->fs) {
+				std::fill(_zbuffer, _zbuffer + (2600 * 1500), -std::numeric_limits<float>::max());
+				screen->clear();
+				temp->fs->vertex = temp->vs->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, -1.0f, -100.0f);
+				temp->fs->original_coords = temp->fs->vertex.vertex_coord;
+				temp->fs->drawcall(width, height, _zbuffer, *screen, temp->vs->gettex(), light);
+				if (temp->map) {
+					DeleteObject(temp->map);
+					temp->map = nullptr;
+				}
+				temp->map = CreateBitmapFromTga(*screen, width, height);
+				InvalidateRect(renderwindow, NULL, FALSE);
+			}
+			else if (temp) {
+				if (temp->map) {
+					DeleteObject(temp->map);
+					temp->map = nullptr;
+				}
+				InvalidateRect(renderwindow, NULL, TRUE);
+
+			}
 		}
 	}
-};
+}
 
+int  WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hRevInstance, _In_ PSTR pCmdLine, _In_ int nCmdShow) {
+	windowinit(hInstance, nCmdShow);
 
-int main() {
-	float width = 1600;
-	float height = 1600;
-	TGAImage test(width, height, 4);
 	Vec3f light(0, 0, -1);
-	float* _zbuffer = new float[width * height];
-	for (int i = width * height; i--; _zbuffer[i] = -std::numeric_limits<float>::max());
 
-	vertex_shader normalvertex("diablo3_pose.obj", true, "diablo3_pose_diffuse.tga");
-	frangment_shader normalfrangment(normalvertex.MVPtrans(Vec3f(0, 0, 0), Vec3f(0, 0, 0), Vec3f(0, 0, 0), Vec3f(1, -1, 2), Vec3f(0, 0, 0), -1, 1, -1, 1, -1.0f, -100.0f));
-	normalfrangment.viewtrans(width, height);
-	normalfrangment.drawcall(width, height, _zbuffer, test, normalvertex.gettex(), light);
-
-	test.write_tga_file("lineout.tga");
-	std::cin.get();
+	Run(light);
 	return 0;
 }
