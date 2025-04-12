@@ -14,6 +14,7 @@ Vec3f cameracoord;
 Vec3f center;
 Vec3f position;
 bool bculling = true;
+Vec3f light;
 
 struct complexshader
 {
@@ -146,6 +147,7 @@ LRESULT CALLBACK renderProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		else if (zDelta < 0) {
 			cameracoord = CameraMoveByMouse(0, 0, -0.1f, 0.1f, cameracoord, center);
 		}
+		break;
 	}
 	case WM_COMMAND:
 	{
@@ -155,17 +157,18 @@ LRESULT CALLBACK renderProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 		case IDM_FILE_OPENMODEL:
 			OpenFileDialog(hwnd);
 			if (g_filePath) {
-				setmodel((complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA));
+				setmodel((complexshader*)GetWindowLongPtr(hwnd, GWLP_USERDATA));
 			}
 			break;
 		case IDM_FILE_UNLOADMODEL: {
-			unloadmodel((complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA));
+			unloadmodel((complexshader*)GetWindowLongPtr(hwnd, GWLP_USERDATA));
 			break;
 		}
 		case IDM_FILE_OPENTEXTURE: {
 			OpenFileDialog(hwnd);
+			complexshader* temp = nullptr;
 			if (g_filePath) {
-				complexshader* temp = (complexshader*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+				temp = (complexshader*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 				if (temp && temp->vs) {
 					settex(temp);
 				}
@@ -173,15 +176,17 @@ LRESULT CALLBACK renderProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 					MessageBox(hwnd, L"请先载入模型！", L"对不起", MB_OK);
 				}
 			}
+			break;
 		}
 		case IDM_SETTING_BCULLING: {
 			bculling = !bculling;
 			UpdateBackfaceCullingMenu(GetSubMenu(GetMenu(hwnd), 1), bculling);
+			break;
 		}
 		default:
 			break;
 		}
-		return 0;
+		break;
 	}
 	case WM_PAINT: {
 		PAINTSTRUCT ps;
@@ -244,11 +249,11 @@ LRESULT CALLBACK renderProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 void setmodel(complexshader* a) {
 	delete(a->vs);
 	delete(a->fs);
-	cameracoord = { 0.0f,0.0f,2.0f };
+	cameracoord = { 0.0f,0.0f,3.0f };
 	center = { 0.0f,0.0f,0.0f };
 	position = { 0.0f,0.0f,0.0f };
 	vertex_shader* temp = new vertex_shader(g_filePath, false);
-	frangment_shader* temp2 = new frangment_shader(temp->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, -1.0f, -100.0f));
+	frangment_shader* temp2 = new frangment_shader(temp->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, 1.0f, 100.0f));
 	a->vs = temp;
 	a->fs = temp2;
 }
@@ -314,9 +319,9 @@ void Run(Vec3f light) {
 		else {
 			complexshader* temp = (complexshader*)GetWindowLongPtr(renderwindow, GWLP_USERDATA);
 			if (temp && temp->vs && temp->fs) {
-				std::fill(_zbuffer, _zbuffer + (2600 * 1500), -std::numeric_limits<float>::max());
+				std::fill(_zbuffer, _zbuffer + (2600 * 1500), 2);
 				screen->clear();
-				temp->fs->vertex = temp->vs->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, -1.0f, -100.0f);
+				temp->fs->vertex = temp->vs->MVPtrans(position, Vec3f(0, 0, 0), Vec3f(0, 0, 0), cameracoord, center, -1, 1, -1, 1, 1.0f, 100.0f);
 				temp->fs->original_coords = temp->fs->vertex.vertex_coord;
 				temp->fs->drawcall(width, height, _zbuffer, *screen, temp->vs->gettex(), light);
 				if (temp->map) {
@@ -341,7 +346,7 @@ void Run(Vec3f light) {
 int  WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hRevInstance, _In_ PSTR pCmdLine, _In_ int nCmdShow) {
 	windowinit(hInstance, nCmdShow);
 
-	Vec3f light(5, 1, -1);
+	light = { 0,0,-1 };
 	light.normalize();
 
 	Run(light);

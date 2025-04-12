@@ -5,9 +5,9 @@
 #include <algorithm>
 #include<cmath>
 
-enum CutXYZ
+enum CutWhere
 {
-	x,y,z
+	left, right, bottom, top, znear, zfar
 };
 
 struct o2v
@@ -15,9 +15,9 @@ struct o2v
 	std::vector<std::vector<Vec3f>> vertex_coord;
 	std::vector<std::vector<Vec2f>> tex_coord;
 	std::vector<std::vector<Vec3f>> nor_coord;
+	std::vector<std::vector<float>> vertex_w;
+	Vec3f view_light;
 };
-
-
 
 class vertex_shader{
 private:
@@ -26,12 +26,10 @@ public:
 	vertex_shader(const char* filename, bool istexture, const char* filenametex = NULL);
 	Model& getmodel();
 	TGAImage& gettex();
-	std::vector<Vec3f> cuttriangle(std::vector<Vec3f>& trangle,float coord,CutXYZ mark);
-	std::vector<std::vector<Vec3f>> cut2triangle(std::vector<Vec3f>& becut);
-	o2v MVPtrans(const Vec3f& worldcoord, const Vec3f& rotate_angle, const Vec3f& scale, 
-							const Vec3f& camera_coord, const Vec3f& camera_direction, 
-							const float& left, const float& right, 
-							const float& bottom, const float& top, 
+	o2v MVPtrans(const Vec3f& worldcoord, const Vec3f& rotate_angle, const Vec3f& scale,
+							const Vec3f& camera_coord, const Vec3f& camera_direction,
+							const float& left, const float& right,
+							const float& bottom, const float& top,
 							const float& znear, const float& zfar);
 };
 
@@ -41,7 +39,7 @@ public:
 	std::vector<std::vector<Vec3f>> original_coords;
 	frangment_shader(const o2v& a);
 	void viewtrans(const int& width, const int& height);
-	void drawcall(const int& width, const int& height, float* zbuffer, TGAImage& target, TGAImage& texture, Vec3f light);
+	void drawcall(const int& width, const int& height, float* zbuffer, TGAImage& target, TGAImage& texture,Vec3f light);
 };
 
 Matrix4x4f obj2world(const Vec3f& worldcoord, const Vec3f& rotate_angle, const Vec3f& scale);

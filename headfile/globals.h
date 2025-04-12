@@ -12,3 +12,4 @@ extern Vec3f center;
 extern Vec3f position;
 extern bool bculling;
 extern const char* g_filePath;
+extern Vec3f light;
